@@ -318,7 +318,7 @@ AllData[a, ]<-EachTrial[30*generations, ]
 names(AllData) <- c("a2","a3","a4","b","gamma", "l",  "mu", "p", "phi1","phi2","phi3","phi4", "ql","r2","r3", "r4", "t1","t2","t3","t4", "vL","y1","y2","z1", "z2", "z3","z4", "Error")
 }
 
-write.csv(AllData, file="AllData300Mutated1.csv")
+write.csv(AllData, file="AllData300Mutated10/30.csv")
 ```
 
 

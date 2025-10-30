@@ -1,0 +1,277 @@
+#This algorithm contains the Genetic Algorithm along with the for loop to run 1000 times
+```{r}
+library(deSolve)
+deltaT <- 0.1 #The length of each time step (in years) 
+finalYr <- 21 #In years - We only have data from the CDC through 2013
+totT <- finalYr/deltaT #Time steps
+cutoffYr <- 8/deltaT
+
+CDCActiveTotal <- c(25102, 24206, 22726, 21210, 19751, 18286, 17499, 16308, 15945, 15055, 14835, 14499, 14063, 13728, 13282, 12895, 11523, 11161, 10510, 9941, 9565) #CDC Reported Tuberculosis 2013 - Table 2
+ActiveCasesTotal <- CDCActiveTotal/1000000 #Calculates total active infections from the CDC data
+
+CDCTBDeaths <- c(1631, 1631+1478, 1631+1478+1336, 1631+1478+1336+1202, 1631+1478+1336+1202+1166, 1631+1478+1336+1202+1166+1112, 1631+1478+1336+1202+1166+1112+930, 1631+1478+1336+1202+1166+1112+930+776, 1631+1478+1336+1202+1166+1112+930+776+764, 1631+1478+1336+1202+1166+1112+930+776+764+784, 1631+1478+1336+1202+1166+1112+930+776+764+784+711, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662+648, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662+648+644, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662+648+644+554, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662+648+644+554+590, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662+648+644+554+590+529, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662+648+644+554+590+529+569, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662+648+644+554+590+529+569+536, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662+648+644+554+590+529+569+536+510, 1631+1478+1336+1202+1166+1112+930+776+764+784+711+662+648+644+554+590+529+569+536+510+555) #CDC Reported Tuberculosis 2013 - Table 1
+TotalDeaths <- CDCTBDeaths/1000000
+
+CDCActiveHR <- c(1534, 1543, 1350, 1284, 1195, 1120, 999, 981, 897, 912, 903, 872, 842, 845, 798, 835, 762, 699, 753, 683, 668) #CDC Reported Tuberculosis 2013 - Table 8
+ActiveCasesHR <- CDCActiveHR/1000000
+
+CDCActiveMDR <- c(484, 431, 327, 250, 201, 155, 157, 146, 151, 158, 119, 128, 125, 124, 124, 107, 114, 105, 127, 86, 96) #CDC Reported Tuberculosis 2013 - Table 9
+ActiveCasesMDR <- CDCActiveMDR/1000000
+parameters <- vector(mode="numeric", length=27) #Creates a vector of parameters with the values set to 0 to start
+
+names(parameters) <- c("a2", "a3", "a4", "b", "gamma", "l", "mu", "p", "phi1", "phi2", "phi3", "phi4", "ql", "r2", "r3", "r4", "t1", "t2", "t3", "t4", "vL", "y1", "y2", "z1", "z2", "z3", "z4")
+
+ranges <- data.frame(matrix(c(0, 0.2, 0, 0.2, 0, 0.2, 0.5, 1, 0, 1, 0, 0.3, 0, 0.5, 0, 0.3, 0.6, 0.9, 0.5, 0.9, 0.3, 0.9, 0.3, 0.5, 0, 30, 0, 0.2, 0, 0.2, 0, 0.2, 0, 0.1, 0, 0.1, 0, 0.1, 0, 0.1, 0, 0.01, 0, 1, 0, 1, 0.6, 0.9, 0.5, 0.9, 0.5, 0.9, 0.1, 0.8),nrow=2, ncol=length(parameters))) #Creates a matrix of the minima and maxima for all parameters
+names(ranges) <- c("a2","a3","a4","b","gamma", "l",  "mu", "p", "phi1","phi2","phi3","phi4", "ql","r2","r3", "r4", "t1","t2","t3","t4", "vL","y1","y2","z1", "z2", "z3","z4")
+ 
+
+ro = 0.0179
+mu0 = 0.013
+alpha = 0.00425 #These three parameters are always constant - They control the overall population size
+
+FirstGeneration<-data.frame(matrix(NA, nrow=900, ncol=27)) # Empty matrix which later contains the first generation of parameter sets. Each line represents a set of parameters
+
+colnames(FirstGeneration)<-c("a2", "a3", "a4", "b", "gamma", "l", "mu", "p", "phi1", "phi2", "phi3", "phi4", "ql", "r2", "r3", "r4", "t1", "t2", "t3", "t4", "vL", "y1", "y2", "z1", "z2", "z3", "z4")
+
+trials= 5 # How many times we run the genetic Algorithm
+
+AllData<-data.frame(matrix(NA, nrow=trials, ncol=28)) #Matrix that contains the Convergence Individuals
+
+for (a in 1:trials){
+
+#Find 100 random values for each parameter and Store to FirstGeneration
+
+for (i in 1:27){
+FirstGeneration[ , i] <- runif(900, ranges[1,i], ranges[2,i]) #This generates 100 random value for each parameter, within that parameter's range
+}
+
+#Functions
+
+Pdot <- function(t, v, parms){
+  with(as.list(c(parms, v)), {
+    #Differential Equations
+    dS <- ro*N + (1-l)*alpha*N + z1*phi1*I1 + z2*phi2*I2 + z3*phi3*I3 + z4*phi4*I4 - ql*t1*S*I1/N - ql*t2*S*I2/N - ql*t3*S*I3/N - ql*t4*S*I4/N - mu0*S
+    dE1 <- l*alpha*(1-r2-r3-r4)*N + (1-p)*ql*t1*S*I1/N + (1-y1)*(1-z1)*phi1*I1 - vL*E1 - mu0*E1
+    dI1 <- p*ql*t1*S*I1/N + vL*E1 - phi1*I1 - (mu0 + mu)*I1
+    dE2 <- l*alpha*r2*N + (1-p)*ql*t2*S*I2/N + gamma*(1-z1)*y1*phi1*I1 + (1-y2)*(1-z2)*phi2*I2 - vL*E2 - mu0*E2
+    dI2 <- p*ql*t2*S*I2/N + vL*E2 - phi2*I2 - (mu0 + mu)*I2
+    dE3 <- l*alpha*r3*N + (1-p)*ql*t3*S*I3/N + (1-gamma)*(1-z1)*y1*phi1*I1 + (1-y2)*(1-z3)*phi3*I3 - vL*E3 - mu0*E3
+    dI3 <- p*ql*t3*S*I3/N + vL*E3 - phi3*I3 - (mu0+mu)*I3
+    dE4 <- l*alpha*r4*N + (1-p)*ql*t4*S*I4/N + y2*(1-z2)*phi2*I2 + y2*(1-z3)*phi3*I3 + (1-z4)*phi4*I4 - vL*I4 - mu0*E4
+    dI4 <- p*ql*t4*S*I4/N + vL*E4 - phi4*I4 - (mu0+mu)*I4
+    dN <- (ro+alpha)*N - mu0*N - mu*(I1 + I2 + I3 + I4)
+    dD <- mu*(I1 + I2 + I3 + I4)
+    return ( list(c(dS, dE1, dI1, dE2, dI2, dE3, dI3, dE4, dI4, dD, dN)) )
+  })
+}
+
+hill <- function(initial=cutoffYr+1, final=totT+1, dataSet=P) {
+  # recursive=TRUE collapses dataframe to labeled vector
+  initv <- c(dataSet[initial,], recursive=TRUE)
+  # times = data points to be calculated
+  times <- initial:final*deltaT
+  # compute master results
+  mres <- lsoda(initv, times, Pdot, parms)
+  # mres[,-1] = mres without 1st column
+  dataSet[initial:final,] <- c(mres[,-1])
+  return(dataSet)
+}
+
+generateResults <- function(mres) {
+  with(as.list(parms), {
+    Susceptible <- mres$S
+    Exposed1 <- mres$E1
+    Infectious1 <- mres$I1
+    Exposed2 <- mres$E2
+    Infectious2 <- mres$I2
+    Exposed3 <- mres$E3
+    Infectious3 <- mres$I3
+    Exposed4 <- mres$E4
+    Infectious4 <- mres$I4
+    Dead <- mres$D
+    Total <- mres$S + mres$E1 + mres$I1 + mres$E2 + mres$I2 + mres$E3 + mres$I3 + mres$E4 + mres$I4
+    InfectiousTotal <- mres$I1 + mres$I2 + mres$I3 + mres$I4 
+    return(data.frame(Susceptible, Exposed1, Infectious1, Exposed2, Infectious2, Exposed3, Infectious3, Exposed4, Infectious4, Total, Dead, InfectiousTotal))
+  })
+}
+
+#Produce fits for the first generation
+
+generations= 15   #how many generations the genetic algorithm runs for
+EachTrial<-data.frame(matrix(NA, nrow=30*generations, ncol=28))
+
+for (x in 1:generations ) {
+
+FirstGenerationError<-vector(mode="numeric", length=100)
+   names(FirstGenerationError)<-seq(1, 100, 1)
+   
+
+for (r in 1:900){
+
+parameters <- vector(mode="numeric", length=27) #Creates a vector of parameters with the values set to 0 to start
+names(parameters) <- c("a2", "a3", "a4", "b", "gamma", "l", "mu", "p", "phi1", "phi2", "phi3", "phi4", "ql", "r2", "r3", "r4", "t1", "t2", "t3", "t4", "vL", "y1", "y2", "z1", "z2", "z3", "z4")
+parameters<-FirstGeneration[r, ]
+
+
+    a2 <- as.numeric(parameters[1])
+    a3 <- as.numeric(parameters[2])
+    a4 <- as.numeric(parameters[3])
+    b <- as.numeric(parameters[4])
+    gamma <- as.numeric(parameters[5])
+    l <- as.numeric(parameters[6])
+    mu <- as.numeric(parameters[7])
+    p <- as.numeric(parameters[8])
+    phi1 <- as.numeric(parameters[9])
+    phi2 <- as.numeric(parameters[10])
+    phi3 <- as.numeric(parameters[11])
+    phi4 <- as.numeric(parameters[12])
+    ql <- as.numeric(parameters[13])
+    r2 <- as.numeric(parameters[14])
+    r3 <- as.numeric(parameters[15])
+    r4 <- as.numeric(parameters[16])
+    t1 <- as.numeric(parameters[17])
+    t2 <- as.numeric(parameters[18])
+    t3 <- as.numeric(parameters[19])
+    t4 <- as.numeric(parameters[20])
+    vL <- as.numeric(parameters[21])
+    y1 <- as.numeric(parameters[22])
+    y2 <- as.numeric(parameters[23])
+    z1 <- as.numeric(parameters[24])
+    z2 <- as.numeric(parameters[25])
+    z3 <- as.numeric(parameters[26])
+    z4 <- as.numeric(parameters[27])
+
+    
+    S <- E1 <- I1 <- E2 <- I2 <- E3 <- I3 <- E4 <- I4 <- D <- N <- rep(0,totT) #Sets compartment values to 0
+    P <- data.frame(S, E1, I1, E2, I2, E3, I3, E4, I4, D, N) #Creates a matrix of compartment values
+    
+    #Total Population
+    P$N[1] <- 280.726081 #From census data
+    #LTBI
+    P$E1[1] <- 11.213*(1-a2-a3-a4) #Data from Hill
+    P$E2[1] <- 11.213*a2
+    P$E3[1] <- 11.213*a3
+    P$E4[1] <- 11.213*a4
+    #Active TB
+    P$I1[1] <- (b*(CDCActiveTotal[1] - CDCActiveHR[1] - CDCActiveMDR[1])/(mu0 + mu + phi1))/1000000 
+    #Method from Hill; The CDC tracks H-Resistant and MDR cases. 
+    #Those leftover are either drug-susceptible or R-resistant (scaled by b and (b-1), respectively) 
+    P$I2[1] <- (CDCActiveHR[1]/(mu0 + mu + phi2))/1000000
+    P$I3[1] <- ((1-b)*(CDCActiveTotal[1] - CDCActiveHR[1] - CDCActiveMDR[1])/(mu0 + mu + phi3))/1000000
+    P$I4[1] <- (CDCActiveMDR[1]/(mu0 + mu + phi4))/1000000
+    #Susceptible Population
+    P$S[1] <- P$N[1] - P$E1[1] - P$I1[1] - P$E2[1] - P$I2[1] - P$E3[1] - P$I3[1] - P$E4[1] - P$I4[1]
+    
+    parms <- c(ro=ro, mu0=mu0, alpha=alpha, a2=a2, a3=a3, a4=a4, b=b, gamma=gamma, l=l, mu=mu, p=p, phi1=phi1, phi2=phi2, phi3=phi3, phi4=phi4, ql=ql, r2=r2, r3=r3, r4=r4, t1=t1, t2=t2, t3=t3, t4=t4, vL=vL,y1=y1, y2=y2, z1=z1, z2=z2, z3=z3, z4=z4) 
+    #This 'parms' vector is redundant, but needed for some of the ODE functions
+    
+    yrs <- seq(1993, 1993+finalYr, deltaT)
+    
+    P <- hill(1, totT+1)
+    Results <- generateResults(P)
+    
+    percdiff1 <- 0 
+    #percdiff will be used to quantify how well the model fits to the actual data by taking the percent difference between the data point for that year and the model value for that year and add it to our total measure of difference
+    for (k in 2:21) { #For 22 years (1993-2014)
+      percdiff1 <- percdiff1 + 
+        (100*(((Results[(1/deltaT)*(k-1)+1,3])*(mu0+mu+phi1) + 
+                 (Results[(1/deltaT)*(k-1)+1,5])*(mu0+mu+phi2) + 
+                 (Results[(1/deltaT)*(k-1)+1,7])*(mu0+mu+phi3) + 
+                 (Results[(1/deltaT)*(k-1)+1,9])*(mu0+mu+phi4) - 
+                 ActiveCasesTotal[k])/ActiveCasesTotal[k]))^2 
+      #Total active cases: The sum of the compartments I1, I2, I3, and I4      
+    }
+    
+    percdiff2 <- 0
+    for (k in 2:21) {
+      percdiff2 <- percdiff2 + 
+        (100*((Results[(1/deltaT)*(k-1)+1,5]*(mu0+mu+phi2) - ActiveCasesHR[k])/ActiveCasesHR[k]))^2 
+      #H-resistant cases
+    }
+    
+    percdiff3 <- 0
+    for (k in 2:21) {
+      percdiff3 <- percdiff3 + (100*((Results[(1/deltaT)*(k-1)+1,9]*(mu0+mu+phi4) - ActiveCasesMDR[k])/ActiveCasesMDR[k]))^2 
+      #MDR cases
+    }
+    
+    percdiff4 <- 0
+    for (k in 2:21) { #For 20 years (1993-2013)
+      percdiff4 <- percdiff4 + (100*((Results[(1/deltaT)*(k-1)+1,11] -TotalDeaths[k])/TotalDeaths[k]))^2 #TB deaths
+    }
+    
+   
+   FirstGenerationError[r]<-percdiff1^2 + percdiff2 + percdiff3 + percdiff4 #The second column contains the total difference between the model and the data. Since the H-resistant and MDR data depend on total active cases, this value is most important and therefore squared
+    
+  } #All the individuals in the first generation are integrated and their error has been calculated
+  
+ FirstGeneration<-cbind(FirstGeneration, FirstGenerationError) #Insert Error Vector in FirstGeneration Matrix. All the fits of the first generation have been quantified
+
+OrderedFirstGenerationError<-sort(FirstGenerationError, decreasing=FALSE)   #Create vector with the errors in increasing order
+
+
+FittestFirstGeneration<- subset(FirstGeneration, FirstGeneration[, 28]<=OrderedFirstGenerationError[30])    #Create the matrix with the fittest individuals of the first generation by selecting the rows whose error value in column 28 is less or equal to the 10th entry of the OrderedFirstGenerationError vector. This matrix contains the individuals in decreasing error and we want it by increasing error.
+
+FittestFirstGeneration[order(FittestFirstGeneration[ , 28]), ]   #Arrange the fittest individuals in order of increasing error
+
+colnames(FittestFirstGeneration)<-c("a2", "a3", "a4", "b", "gamma", "l", "mu", "p", "phi1", "phi2", "phi3", "phi4", "ql", "r2", "r3", "r4", "t1", "t2", "t3", "t4", "vL", "y1", "y2", "z1", "z2", "z3", "z4", "Error")
+
+#Breed 1st Generation
+
+SecondGeneration<-data.frame(matrix(NA, nrow=900, ncol=27))
+
+colnames(SecondGeneration)<-c("a2", "a3", "a4", "b", "gamma", "l", "mu", "p", "phi1", "phi2", "phi3", "phi4", "ql", "r2", "r3", "r4", "t1", "t2", "t3", "t4", "vL", "y1", "y2", "z1", "z2", "z3", "z4")
+
+for (i in 1:30){
+    for (j in 1:30){
+    CurrentIndividual<- 30*(i-1)+j
+    for (z in 1:27){
+    coin<-runif(1, 0, 1)
+    if (coin>0.5) {
+    SecondGeneration[CurrentIndividual, z]<- FittestFirstGeneration[i, z]
+    } else {SecondGeneration[CurrentIndividual, z]<- FittestFirstGeneration[j, z]}
+    }
+    }
+}
+
+
+# Insert Mutations
+
+MutationRate <- 0.3
+SecondGenerationMutated <- SecondGeneration
+
+# Indices of individuals to mutate
+mutate_individuals <- sort(c(30:40, 130:140, 230:240, 330:340, 430:440, 530:540, 630:640,
+                     730:740, 830:840, 70:80, 170:180, 270:280, 370:380, 470:480,
+                     570:580, 670:680, 770:780, 870:880, 10:20, 110:120, 210:220,
+                     310:320, 410:420, 510:520, 610:620, 710:720, 810:820))
+
+for (i in mutate_individuals) {
+  for (z in 1:27){
+    coin <- runif(1)
+    if (coin > MutationRate) {
+      SecondGenerationMutated[i, z] <- mean(c(
+        runif(1, ranges[1, z], ranges[2, z]),
+        SecondGenerationMutated[i, z]
+      ))
+    } else {
+      SecondGenerationMutated[i, z] <- SecondGeneration[i, z]
+    }
+  }
+}
+
+    
+Check<-SecondGenerationMutated-SecondGeneration
+  
+  EachTrial[(30*(x-1)+1):(30*x), ]<-FittestFirstGeneration[1:30, ]
+  
+FirstGeneration<-SecondGenerationMutated
+
+}
+
+AllData[a, ]<-EachTrial[30*generations, ]  #The 1000 Convergence Individuals have been produced 
+names(AllData) <- c("a2","a3","a4","b","gamma", "l",  "mu", "p", "phi1","phi2","phi3","phi4", "ql","r2","r3", "r4", "t1","t2","t3","t4", "vL","y1","y2","z1", "z2", "z3","z4", "Error")
+}
+
+write.csv(AllData, file="AllData300Mutated1.csv")
+```
