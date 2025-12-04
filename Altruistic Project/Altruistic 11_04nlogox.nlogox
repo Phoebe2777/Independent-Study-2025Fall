@@ -418,7 +418,6 @@ to ode-step
   ;;  aP = proportion of A alleles among perpetrators
   let aP A-count / total
 
-  ;; ---------------------------------
   ;; aR = proportion of A alleles among recipients
   let aR 0
   if perfect-discrimination-on [
