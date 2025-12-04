@@ -1443,6 +1443,9 @@ end
         <enumeratedValueSet variable="vR">
           <value value="1"></value>
         </enumeratedValueSet>
+        <enumeratedValueSet variable="dominant-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
         <enumeratedValueSet variable="perfect-discrimination-on">
           <value value="true"></value>
         </enumeratedValueSet>
@@ -1544,6 +1547,27 @@ end
         </enumeratedValueSet>
         <enumeratedValueSet variable="perfect-discrimination-on">
           <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-population">
+          <value value="100"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="birth-rate">
+          <value value="0.1"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="metabolic-rate">
+          <value value="0.08"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="move-cost">
+          <value value="0.03"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="reproduction-cost">
+          <value value="1"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="reproduction-min-energy">
+          <value value="3"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="time-step">
+          <value value="0.6"></value>
         </enumeratedValueSet>
         <enumeratedValueSet variable="altruism-energy">
           <value value="false"></value>
