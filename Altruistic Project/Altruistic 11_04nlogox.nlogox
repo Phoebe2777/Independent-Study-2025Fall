@@ -3,7 +3,6 @@
   <code><![CDATA[; NetLogo model for population with altruism (A) and non-altruism (N) alleles
 ; Each turtle has a genotype: AA, AN, or NN
 ; A is dominant: AA and AN are phenotypically altruistic
-; AA individuals have reduced fitness (reproduction rate)
 ; Simulation includes reproduction, movement, interaction, and death
 
 breed [individuals individual]
@@ -21,9 +20,11 @@ patches-own [
 ]
 
 globals [
-  birth-prob-AA ; Probability of reproduction if at least one parent is AA
-  birth-prob-AN ; Probability of reproduction if at least one parent is AN
-  birth-prob-NN ; Probability of reproduction if both parents are NN
+  ;; ODE variables
+  A-count ;; number of A alleles
+  N-count ;; number of N alleles
+
+  ;; Agent based model variables
   death-rate
   initial-population ; Number of individuals at the start of the simulation
   generation ; To track the number of generations elapsed
@@ -32,9 +33,50 @@ globals [
 ;; Setup and Initialization
 to setup
   clear-all
-  set birth-prob-AA 0.2  ; reduced fitness for AA
-  set birth-prob-AN 0.5  ; normal fitness for heterozygotes AN
-  set birth-prob-NN 0.5  ; normal fitness for NN
+
+  ;; When ode mode is on, the initilization is simpler 
+  if ode-mode [
+    ;; Initialize allele counts directly 
+    set A-count initial-A
+    set N-count initial-N
+
+    ;; Disable all ABM-specific mechanisms
+    set birth-rate 0
+    set metabolic-rate 0
+    set move-cost 0
+    set energy-from-grass 0
+    set reproduction-min-energy 0
+    set reproduction-cost 0
+    set altruist-reproduction-bonus 0
+    
+    set grass-on false
+    set starvation-on false
+    set aging-on false
+    set random-death-on false
+
+    set altruism-energy false
+    set altruism-mortality false
+    set altruism-reproduction false
+    
+    reset-ticks
+  ]
+
+;; Ensure only one altruism mechanism is active
+if altruism-energy [
+  set altruism-mortality false
+  set altruism-reproduction false
+]
+
+if altruism-mortality [
+  set altruism-energy false
+  set altruism-reproduction false
+]
+
+if altruism-reproduction [
+  set altruism-energy false
+  set altruism-mortality false
+]
+
   set death-rate 0.01    ; 1% random chance of death per tick
   set initial-population 100
   set generation 0
@@ -48,7 +90,7 @@ to setup
     set-genotype
     set-genotype-color
     set age 0
-    set energy 5
+    set energy 10
   ]
 
 ask patches [
@@ -85,6 +127,15 @@ end
 
 ;; Main Simulation Loop
 to go
+  ;; ode mode
+  if ode-mode [
+  ode-step
+  update-allele-plot   ;; plot p(t) = A / (A + N)
+  tick
+]
+
+
+  ;; agent based model mode
   ask individuals [
     move
     if grass-on [ eat-grass ]
@@ -164,15 +215,26 @@ to reproduce
   let partner one-of individuals-here with [self != myself and energy >= reproduction-min-energy]
   if partner = nobody [ stop ]
 
-  ;; Determine reproduction probability based on genotypes
-  let p1 genotype
-  let p2 [genotype] of partner
-  let prob 0
+  ;; Eeproduction probability
+  let prob birth-rate
 
-  if p1 = "AA" or p2 = "AA" [ set prob birth-prob-AA ]
-  if p1 = "AN" or p2 = "AN" [ set prob max list prob birth-prob-AN ]
-  if p1 = "NN" and p2 = "NN" [ set prob birth-prob-NN ]
+;; Reproductive benift for altruists
+  if altruism-reproduction [
+    let is-altruist? (
+      ifelse-value dominant-on
+        [ genotype = "AA" or genotype = "AN" ]
+        [ genotype = "AA" ]
+    )
 
+    if is-altruist? [
+      set prob prob * (1 + altruist-reproduction-bonus)
+    ]
+  ]
+
+  ;; Prvent the bonus to create impossible probability of reproduction
+  set prob min list prob 1
+  
+  
   ;; Reproduce if successful
   if (random-float 1 < prob * time-step) [
     ;; Both parents pay the reproduction cost
@@ -186,32 +248,56 @@ end
 
 ;;Interacting with others on the same patch
 to interact
-  ; Interaction occurs between individuals on the same patch only
+  ;; Individuals on the same patch
   let possible-recipients other individuals-here
+  if not any? possible-recipients [ stop ]
 
-  if any? possible-recipients [
-    let is-altruist? (ifelse-value dominant-on
-                       [genotype = "AA" or genotype = "AN"]
-                       [genotype = "AA"])
+  ;; Determine if this individual is an altruist
+  let is-altruist? (
+    ifelse-value dominant-on
+      [ genotype = "AA" or genotype = "AN" ]
+      [ genotype = "AA" ]
+  )
 
-    if is-altruist? [
-      let candidate-recipients possible-recipients
+  ;; Only altruists help
+  if not is-altruist? [ stop ]
 
-      if perfect-discrimination-on [
-        set candidate-recipients possible-recipients with [
-          (dominant-on and (genotype = "AA" or genotype = "AN")) or
-          ((not dominant-on) and genotype = "AA")
-        ]
-      ]
+  ;; Candidate recipients
+  let candidate-recipients possible-recipients
 
-      if any? candidate-recipients [
-        let recip one-of candidate-recipients
-        set energy energy - altruists-cost * time-step
-        ask recip [ set energy energy + recipients-benefit * time-step ]
-      ]
+  ;; Perfect discrimination rule
+  if perfect-discrimination-on [
+    set candidate-recipients candidate-recipients with [
+      (dominant-on and (genotype = "AA" or genotype = "AN")) or
+      ((not dominant-on) and genotype = "AA")
     ]
   ]
+
+  ;; If no valid recipients, stop
+  if not any? candidate-recipients [ stop ]
+
+  ;; Pick one recipient
+  let recip one-of candidate-recipients
+        
+  if altruism-energy [
+    ;; altruist pays energy cost
+    set energy energy - (altruists-cost * time-step)
+
+    ;; recipient gets energy benefit
+    ask recip [
+      set energy energy + (recipients-benefit * time-step)
+    ]
+  ]
+
+  ;; mortality cost of altruism
+if altruism-mortality [
+  if random-float 1 < altruist-death-penalty * time-step [
+    die
+  ]
+]
+
 end
+    
 
 ;; Reproduction Function
 to hatch-offspring [partner]
@@ -269,6 +355,14 @@ end
 
 ; A/(A+N) Allele Frequency 
 to-report A-allele-proportion
+  ;; If we are in ODE mode, compute directly from A-count and N-count
+  if ode-mode [
+    let total (A-count + N-count)
+    if total = 0 [ report 0 ]
+    report A-count / total
+  ]
+
+  ;; Otherwise, compute from individuals (agent based model)
   let A 0
   let N 0
 
@@ -283,6 +377,7 @@ to-report A-allele-proportion
   if total = 0 [ report 0 ]
   report A / total
 end
+
 
 to update-allele-plot
   set-current-plot "Allele Frequency (A / (A+N))"
@@ -315,27 +410,57 @@ to update-grass-plot
   plot green-fraction
 end
 
+to ode-step
+  ;; setting total number of alleles
+  let total (A-count + N-count)
+  if total = 0 [ stop ]   ;; avoid division by zero
+
+  ;;  aP = proportion of A alleles among perpetrators
+  let aP A-count / total
+
+  ;; ---------------------------------
+  ;; aR = proportion of A alleles among recipients
+  let aR 0
+  if perfect-discrimination-on [
+    set aR 1
+  ]
+  if not perfect-discrimination-on [
+    set aR A-count / total
+  ]
+
+  ;; compute changes in A and N
+  let dA (
+    alpha * A-count * (1 - total / K)
+    + n-interaction-rate * (aP * vP + aR * vR)
+  )
+
+  let dN (
+    alpha * N-count * (1 - total / K)
+    + n-interaction-rate * ((1 - aP) * vP + (1 - aR) * vR)
+  )
+
+  ;; update allele counts
+  set A-count A-count + dA
+  set N-count N-count + dN
+
+  ;; prevent negative values
+  if A-count < 0 [ set A-count 0 ]
+  if N-count < 0 [ set N-count 0 ]
+end
 
 ]]></code>
   <widgets>
     <view x="340" wrappingAllowedX="true" y="49" frameRate="30.0" minPycor="-16" height="529" showTickCounter="true" patchSize="15.91" fontSize="10" wrappingAllowedY="true" width="529" tickCounterLabel="ticks" maxPycor="16" updateMode="0" maxPxcor="16" minPxcor="-16"></view>
     <monitor x="1402" precision="17" y="41" height="60" fontSize="11" width="100" display="Total population">total-population</monitor>
-    <slider x="0" step="0.1" y="13" max="1" width="250" display="time-step" height="50" min="0.1" direction="Horizontal" default="0.1" variable="time-step"></slider>
-    <slider x="164" step="1" y="271" max="20" width="167" display="Grass-regrowth-time" height="50" min="0" direction="Horizontal" default="9.0" variable="Grass-regrowth-time"></slider>
+    <slider x="0" step="0.1" y="13" max="1" width="250" display="time-step" height="50" min="0.1" direction="Horizontal" default="0.6" variable="time-step"></slider>
+    <slider x="164" step="1" y="271" max="20" width="167" display="Grass-regrowth-time" height="50" min="0" direction="Horizontal" default="6.0" variable="Grass-regrowth-time"></slider>
     <button x="93" y="79" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="63">go
 </button>
-    <switch x="121" y="224" height="40" on="true" variable="random-death-on" width="134" display="random-death-on"></switch>
+    <switch x="121" y="224" height="40" on="false" variable="random-death-on" width="134" display="random-death-on"></switch>
     <switch x="121" y="127" height="40" on="true" variable="perfect-discrimination-on" width="177" display="perfect-discrimination-on"></switch>
-    <switch x="121" y="177" height="40" on="true" variable="starvation-on" width="109" display="starvation-on"></switch>
-    <slider x="6" step="0.1" y="271" max="1" width="152" display="Energy-from-grass" height="50" min="0.1" direction="Horizontal" default="0.4" variable="Energy-from-grass"></slider>
-    <slider x="6" step="0.01" y="329" max="0.2" width="250" display="move-cost" height="50" min="0" direction="Horizontal" default="0.2" variable="move-cost"></slider>
-    <slider x="6" step="1" y="445" max="10" width="250" display="reproduction-min-energy" height="50" min="0" direction="Horizontal" default="3.0" variable="reproduction-min-energy"></slider>
-    <slider x="6" step="0.01" y="387" max="0.2" width="250" display="metabolic-rate" height="50" min="0" direction="Horizontal" default="0.2" variable="metabolic-rate"></slider>
-    <slider x="6" step="1" y="503" max="10" width="250" display="reproduction-cost" height="50" min="0" direction="Horizontal" default="1.0" variable="reproduction-cost"></slider>
-    <slider x="6" step="0.05" y="561" max="1" width="250" display="altruists-cost" height="50" min="0" direction="Horizontal" default="0.95" variable="altruists-cost"></slider>
-    <slider x="6" step="0.05" y="618" max="1" width="250" display="recipients-benefit" height="50" min="0" direction="Horizontal" default="0.3" variable="recipients-benefit"></slider>
-    <switch x="6" y="175" height="40" on="true" variable="grass-on" width="82" display="grass-on"></switch>
-    <switch x="6" y="223" height="40" on="true" variable="aging-on" width="83" display="aging-on"></switch>
+    <switch x="121" y="177" height="40" on="false" variable="starvation-on" width="109" display="starvation-on"></switch>
+    <switch x="6" y="175" height="40" on="false" variable="grass-on" width="82" display="grass-on"></switch>
+    <switch x="6" y="223" height="40" on="false" variable="aging-on" width="83" display="aging-on"></switch>
     <switch x="6" y="128" height="40" on="true" variable="dominant-on" width="110" display="dominant-on"></switch>
     <button x="6" y="79" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="70">setup</button>
     <plot x="1161" autoPlotX="true" yMax="10.0" autoPlotY="true" yAxis="Population" y="34" xMin="0.0" height="175" legend="false" xMax="10.0" yMin="0.0" width="230" xAxis="Time" display="Total Population">
@@ -390,6 +515,27 @@ end
         <update></update>
       </pen>
     </plot>
+    <slider x="5" step="0.01" y="445" max="0.2" width="250" display="metabolic-rate" height="50" min="0" direction="Horizontal" default="0.08" variable="metabolic-rate"></slider>
+    <slider x="5" step="0.01" y="387" max="0.2" width="250" display="move-cost" height="50" min="0" direction="Horizontal" default="0.03" variable="move-cost"></slider>
+    <slider x="5" step="1" y="503" max="10" width="250" display="reproduction-min-energy" height="50" min="0" direction="Horizontal" default="3.0" variable="reproduction-min-energy"></slider>
+    <slider x="5" step="1" y="561" max="10" width="250" display="reproduction-cost" height="50" min="0" direction="Horizontal" default="1.0" variable="reproduction-cost"></slider>
+    <slider x="5" step="0.05" y="671" max="1" width="250" display="recipients-benefit" height="50" min="0" direction="Horizontal" default="0.1" variable="recipients-benefit"></slider>
+    <slider x="5" step="0.05" y="619" max="1" width="250" display="altruists-cost" height="50" min="0" direction="Horizontal" default="0.25" variable="altruists-cost"></slider>
+    <slider x="5" step="0.005" y="329" max="0.1" width="250" display="birth-rate" height="50" min="0" direction="Horizontal" default="0.1" variable="birth-rate"></slider>
+    <slider x="5" step="0.1" y="271" max="1" width="152" display="Energy-from-grass" height="50" min="0.1" direction="Horizontal" default="0.9" variable="Energy-from-grass"></slider>
+    <switch x="330" y="600" height="40" on="false" variable="altruism-energy" width="122" display="altruism-energy"></switch>
+    <switch x="329" y="653" height="40" on="false" variable="altruism-reproduction" width="158" display="altruism-reproduction"></switch>
+    <slider x="4" step="0.01" y="725" max="0.5" width="250" display="altruist-reproduction-bonus" height="50" min="0" direction="Horizontal" default="0.5" variable="altruist-reproduction-bonus"></slider>
+    <switch x="328" y="701" height="40" on="false" variable="altruism-mortality" width="135" display="altruism-mortality"></switch>
+    <slider x="4" step="0.01" y="777" max="0.2" width="250" display="altruist-death-penalty" height="50" min="0" direction="Horizontal" default="0.2" variable="altruist-death-penalty"></slider>
+    <slider x="797" step="1" y="665" max="500" width="250" display="initial-A" height="50" min="0" direction="Horizontal" default="50.0" variable="initial-A"></slider>
+    <slider x="797" step="1" y="729" max="500" width="250" display="initial-N" height="50" min="0" direction="Horizontal" default="50.0" variable="initial-N"></slider>
+    <switch x="678" y="667" height="40" on="true" variable="ode-mode" width="91" display="ode-mode"></switch>
+    <slider x="1063" step="0.01" y="667" max="0.5" width="250" display="alpha" height="50" min="0" direction="Horizontal" default="0.5" variable="alpha"></slider>
+    <slider x="1064" step="0.1" y="728" max="3" width="250" display="n-interaction-rate" height="50" min="0" direction="Horizontal" default="3.0" variable="n-interaction-rate"></slider>
+    <slider x="799" step="10" y="790" max="500" width="250" display="K" height="50" min="50" direction="Horizontal" default="120.0" variable="K"></slider>
+    <slider x="1065" step="0.05" y="786" max="0.5" width="250" display="vP" height="50" min="-0.5" direction="Horizontal" default="0.5" variable="vP"></slider>
+    <slider x="1332" step="0.05" y="794" max="0.5" width="250" display="vR" height="50" min="-0.5" direction="Horizontal" default="-0.3" variable="vR"></slider>
   </widgets>
   <info>## WHAT IS IT?
 
@@ -1260,4 +1406,225 @@ end
     </shape>
   </linkShapes>
   <previewCommands>setup repeat 75 [ go ]</previewCommands>
+  <experiments>
+    <experiment name="ODE mode" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <exitCondition><![CDATA[ticks >= 500]]></exitCondition>
+      <metrics>
+        <metric>A-count</metric>
+        <metric>N-count</metric>
+        <metric>A-allele-proportion</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="ode-mode">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-A">
+          <value value="50"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-N">
+          <value value="50"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="alpha">
+          <value value="0.5"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="K">
+          <value value="120"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-interaction-rate">
+          <value value="0.1"></value>
+          <value value="1"></value>
+          <value value="2"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="vP">
+          <value value="-0.5"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="vR">
+          <value value="1"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="perfect-discrimination-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="time-step">
+          <value value="0.05"></value>
+        </enumeratedValueSet>
+      </constants>
+    </experiment>
+    <experiment name="Altruism_Energy" repetitions="30" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <exitCondition><![CDATA[ticks >= 500]]></exitCondition>
+      <metrics>
+        <metric>A-allele-proportion</metric>
+        <metric>total-population</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="ode-mode">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="grass-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="starvation-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="aging-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="random-death-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="dominant-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="perfect-discrimination-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-population">
+          <value value="100"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="birth-rate">
+          <value value="0.1"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="metabolic-rate">
+          <value value="0.08"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="move-cost">
+          <value value="0.03"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="reproduction-cost">
+          <value value="1"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="reproduction-min-energy">
+          <value value="3"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="time-step">
+          <value value="0.6"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="altruism-energy">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="altruism-mortality">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="altruism-reproduction">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <steppedValueSet variable="altruists-cost" first="0.1" step="0.25" last="0.5"></steppedValueSet>
+        <steppedValueSet variable="recipients-benefit" first="0.05" step="0.1" last="0.2"></steppedValueSet>
+      </constants>
+    </experiment>
+    <experiment name="Altruism_Mortality" repetitions="30" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <exitCondition><![CDATA[ticks >= 500]]></exitCondition>
+      <metrics>
+        <metric>A-allele-proportion</metric>
+        <metric>total-population</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="ode-mode">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="grass-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="starvation-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="aging-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="random-death-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="dominant-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="perfect-discrimination-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="altruism-energy">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="altruism-mortality">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="altruism-reproduction">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <steppedValueSet variable="altruist-death-penalty" first="0.1" step="0.2" last="0.3"></steppedValueSet>
+        <enumeratedValueSet variable="altruists-cost">
+          <value value="0"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="recipients-benefit">
+          <value value="0"></value>
+        </enumeratedValueSet>
+      </constants>
+    </experiment>
+    <experiment name="Altruism_Reproduction" repetitions="30" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <exitCondition><![CDATA[ticks >= 500]]></exitCondition>
+      <metrics>
+        <metric>A-allele-proportion</metric>
+        <metric>total-population</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="ode-mode">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="grass-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="starvation-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="aging-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="random-death-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="dominant-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="perfect-discrimination-on">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-population">
+          <value value="100"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="birth-rate">
+          <value value="0.1"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="metabolic-rate">
+          <value value="0.08"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="move-cost">
+          <value value="0.03"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="reproduction-cost">
+          <value value="1"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="reproduction-min-energy">
+          <value value="3"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="time-step">
+          <value value="0.6"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="altruism-energy">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="altruism-mortality">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="altruism-reproduction">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <steppedValueSet variable="altruist-reproduction-bonus" first="0.1" step="0.3" last="0.5"></steppedValueSet>
+      </constants>
+    </experiment>
+  </experiments>
 </model>
